@@ -25,10 +25,10 @@ The configuration is stored in a YAML file like this:
 
     site: _site
 	
-	aws_id: AKIAI6XLRPEQEU6T6ZXA
-	aws_secret: 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
-	region: eu-central-1
-	aws_profile: deploy
+    aws_id: AKIAI6XLRPEQEU6T6ZXA
+    aws_secret: Ua06LWWJRnAvUZuE4yRY/f6Cyyp9R2pF0PsQnwqd
+    region: eu-central-1
+    aws_profile: deploy
 	
     s3_bucket: example.com
     cloudfront_distribution_id: XXXXXXXXXXX
@@ -102,9 +102,9 @@ Configuration file
     The region used to connect to the AWS.
 	
 **aws_profile**
-    The AWS profile used to connect to the AWS. If ``aws_profile`` and also 
-	either ``aws_id`` or ``aws_secret`` is specified, the specified access 
-	key is used to connect.
+    The AWS profile used to connect to the AWS. If ``aws_profile`` and also
+    either ``aws_id`` or ``aws_secret`` is specified, the specified access 
+    key is used to connect.
 
 **s3_bucket**
     The name of the S3 bucket to upload the files to. You have to allow the
