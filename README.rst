@@ -25,8 +25,8 @@ The configuration is stored in a YAML file like this:
 
     site: _site
 	
-    aws_id: AKIAI6XLRPEQEU6T6ZXA
-    aws_secret: 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
+    aws_id: XXXXXXXXXXX
+    aws_secret: XXXXXXXXXXX
     region: eu-central-1
     aws_profile: deploy
 	
