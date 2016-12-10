@@ -112,6 +112,121 @@ def upload_key(obj, path, cache_rules, dry, storage_class=None):
         content_file.close()
 
 
+def upload_to_bucket(session, site_dir, conf, dry):
+    bucket_name = conf['s3_bucket']
+    cache_rules = conf.get('cache_rules', [])
+    if conf.get('s3_reduced_redundancy', False):
+        storage_class = _STORAGE_REDUCED_REDUDANCY
+    else:
+        storage_class = _STORAGE_STANDARD
+
+    logger.info('Connecting to bucket {}...'.format(bucket_name))
+
+    s3 = boto3.resource('s3')
+    bucket = s3.Bucket(bucket_name)
+
+    logger.info('Site: {}'.format(site_dir))
+
+    processed_keys = set()
+    updated_keys = set()
+
+    for obj in bucket.objects.all():
+        processed_keys.add(obj.key)
+        path = os.path.join(site_dir, obj.key)
+
+        # Delete keys that have been deleted locally
+        if not os.path.isfile(path):
+            logger.info('Deleting {}...'.format(obj.key))
+            if not dry:
+                obj.delete()
+            updated_keys.add(obj.key)
+            continue
+
+        # Skip keys that have not been updated
+        mtime = datetime.fromtimestamp(os.path.getmtime(path), UTC)
+        if not conf.get('force', False):
+            if (mtime <= obj.last_modified and
+                    obj.storage_class == storage_class):
+                logger.info('Not modified, skipping {}.'.format(obj.key))
+                continue
+
+        upload_key(
+            obj, path, cache_rules, dry, storage_class=storage_class)
+        updated_keys.add(obj.key)
+
+    for dirpath, dirnames, filenames in os.walk(site_dir):
+        key_base = os.path.relpath(dirpath, site_dir)
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            key_name = key_name_from_path(os.path.join(key_base, name))
+            if key_name in processed_keys:
+                continue
+
+            # Create new object
+            obj = bucket.Object(key_name)
+
+            logger.info('Creating key {}...'.format(obj.key))
+
+            upload_key(
+                obj, path, cache_rules, dry, storage_class=storage_class)
+            updated_keys.add(key_name)
+
+    logger.info('Bucket update done.')
+    
+    return processed_keys, updated_keys
+
+
+def invalidate_cloudfront(session, processed_keys, updated_keys, conf, dry):
+    logger.info('Connecting to Cloudfront distribution {}...'.format(
+            conf['cloudfront_distribution_id']))
+
+    index_pattern = None
+    if 'index_document' in conf:
+        index_doc = conf['index_document']
+        index_pattern = r'(^(?:.*/)?)' + re.escape(index_doc) + '$'
+
+    def path_from_key_name(key_name):
+        if index_pattern is not None:
+            m = re.match(index_pattern, key_name)
+            if m:
+                return m.group(1)
+        return key_name
+
+    t = PrefixCoverTree()
+    for key_name in updated_keys:
+        t.include(path_from_key_name(key_name))
+    for key_name in processed_keys - updated_keys:
+        t.exclude(path_from_key_name(key_name))
+
+    paths = []
+    for prefix, exact in t.matches():
+        path = '/' + prefix + ('' if exact else '*')
+        logger.info('Preparing to invalidate {}...'.format(path))
+        paths.append(path)
+
+    cloudfront = boto3.client('cloudfront')
+
+    if len(paths) > 0:
+        dist_id = conf['cloudfront_distribution_id']
+        if not dry:
+            logger.info('Creating invalidation request...')
+            response = cloudfront.create_invalidation(
+                DistributionId=dist_id,
+                InvalidationBatch=dict(
+                        Paths=dict(
+                            Quantity=len(paths),
+                            Items=paths
+                        ),
+                        CallerReference='s3-deploy-website'
+                    )
+            )
+            invalidation = response['Invalidation']
+            logger.info('Invalidation request {} is {}'.format(
+                invalidation['Id'], invalidation['Status']))
+    else:
+        logger.info('Nothing updated, invalidation skipped.')
+
+
 def main():
     logging.basicConfig(level=logging.INFO)
     logging.getLogger('boto3').setLevel(logging.WARNING)
@@ -132,116 +247,15 @@ def main():
     # Open configuration file
     conf, base_path = config.load_config_file(args.path)
 
-    bucket_name = conf['s3_bucket']
-    cache_rules = conf.get('cache_rules', [])
-    if conf.get('s3_reduced_redundancy', False):
-        storage_class = _STORAGE_REDUCED_REDUDANCY
-    else:
-        storage_class = _STORAGE_STANDARD
+    if args.force:
+            conf['force'] = True
 
-    logger.info('Connecting to bucket {}...'.format(bucket_name))
-
-    s3 = boto3.resource('s3')
-    bucket = s3.Bucket(bucket_name)
-
-    site_dir = os.path.join(base_path, conf['site'])
-
-    logger.info('Site: {}'.format(site_dir))
-
-    processed_keys = set()
-    updated_keys = set()
-
-    for obj in bucket.objects.all():
-        processed_keys.add(obj.key)
-        path = os.path.join(site_dir, obj.key)
-
-        # Delete keys that have been deleted locally
-        if not os.path.isfile(path):
-            logger.info('Deleting {}...'.format(obj.key))
-            if not args.dry:
-                obj.delete()
-            updated_keys.add(obj.key)
-            continue
-
-        # Skip keys that have not been updated
-        mtime = datetime.fromtimestamp(os.path.getmtime(path), UTC)
-        if not args.force:
-            if (mtime <= obj.last_modified and
-                    obj.storage_class == storage_class):
-                logger.info('Not modified, skipping {}.'.format(obj.key))
-                continue
-
-        upload_key(
-            obj, path, cache_rules, args.dry, storage_class=storage_class)
-        updated_keys.add(obj.key)
-
-    for dirpath, dirnames, filenames in os.walk(site_dir):
-        key_base = os.path.relpath(dirpath, site_dir)
-        for name in filenames:
-            path = os.path.join(dirpath, name)
-            key_name = key_name_from_path(os.path.join(key_base, name))
-            if key_name in processed_keys:
-                continue
-
-            # Create new object
-            obj = bucket.Object(key_name)
-
-            logger.info('Creating key {}...'.format(obj.key))
-
-            upload_key(
-                obj, path, cache_rules, args.dry, storage_class=storage_class)
-            updated_keys.add(key_name)
-
-    logger.info('Bucket update done.')
+    processed_keys, updated_keys = upload_to_bucket(
+        None,
+        os.path.join(base_path, conf['site']),
+        conf,
+        args.dry)
 
     # Invalidate files in cloudfront distribution
     if 'cloudfront_distribution_id' in conf:
-        logger.info('Connecting to Cloudfront distribution {}...'.format(
-            conf['cloudfront_distribution_id']))
-
-        index_pattern = None
-        if 'index_document' in conf:
-            index_doc = conf['index_document']
-            index_pattern = r'(^(?:.*/)?)' + re.escape(index_doc) + '$'
-
-        def path_from_key_name(key_name):
-            if index_pattern is not None:
-                m = re.match(index_pattern, key_name)
-                if m:
-                    return m.group(1)
-            return key_name
-
-        t = PrefixCoverTree()
-        for key_name in updated_keys:
-            t.include(path_from_key_name(key_name))
-        for key_name in processed_keys - updated_keys:
-            t.exclude(path_from_key_name(key_name))
-
-        paths = []
-        for prefix, exact in t.matches():
-            path = '/' + prefix + ('' if exact else '*')
-            logger.info('Preparing to invalidate {}...'.format(path))
-            paths.append(path)
-
-        cloudfront = boto3.client('cloudfront')
-
-        if len(paths) > 0:
-            dist_id = conf['cloudfront_distribution_id']
-            if not args.dry:
-                logger.info('Creating invalidation request...')
-                response = cloudfront.create_invalidation(
-                    DistributionId=dist_id,
-                    InvalidationBatch=dict(
-                        Paths=dict(
-                            Quantity=len(paths),
-                            Items=['<Path>' + quote_plus(p) + '</Path>'
-                                   for p in paths]
-                        ),
-                        CallerReference='s3-deploy-website'
-                    )
-                )
-                invalidation = response['Invalidation']
-                logger.info('Invalidation request {} is {}'.format(
-                    invalidation['Id'], invalidation['Status']))
-        else:
-            logger.info('Nothing updated, invalidation skipped.')
+        invalidate_cloudfront(None, processed_keys, updated_keys, conf, args.dry)
