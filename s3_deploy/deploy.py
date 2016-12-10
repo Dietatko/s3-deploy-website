@@ -7,11 +7,9 @@ import gzip
 import shutil
 import mimetypes
 from datetime import datetime
+from six import BytesIO
 
 import boto3
-
-from six import BytesIO
-from six.moves.urllib.parse import quote_plus
 
 from . import config
 from .prefixcovertree import PrefixCoverTree
@@ -46,20 +44,37 @@ logger = logging.getLogger(__name__)
 
 mimetypes.init()
 
+
 def create_session(conf):
     session = None
     if conf.get('aws_id', False) or conf.get('aws_secret', False):
         if conf.get('aws_id', False) and conf.get('aws_secret', False):
-            logger.info('Creating AWS session using AWS key id \"{}\" and region \"{}\"...'.format(conf['aws_id'], conf.get('region', '<Default>')))
-            session = boto3.Session(conf['aws_id'], conf['aws_secret'], region_name=conf.get('region', None))
+            logger.info('Creating AWS session using AWS key id \"{}\" '
+                        'and region \"{}\"...'
+                        .format(conf['aws_id'],
+                                conf.get('region', '<Default>')))
+
+            session = boto3.Session(conf['aws_id'],
+                                    conf['aws_secret'],
+                                    region_name=conf.get('region', None))
         else:
-            logger.error('Both AWS access key ID and AWS secret access key has to specified if either is specified.')
+            logger.error('Both AWS access key ID and AWS secret access key has'
+                         'to specified if either is specified.')
+
     elif conf.get('aws_profile', False):
-        logger.info('Creating AWS session using AWS profile \"{}\"...'.format(conf['aws_profile']))
-        session = boto3.Session(profile_name=conf['aws_profile'])
+        logger.info('Creating AWS session using AWS profile \"{}\" '
+                    'and region \"{}\"...'
+                    .format(conf['aws_profile'],
+                            conf.get('region', '<Default>')))
+
+        session = boto3.Session(profile_name=conf['aws_profile'],
+                                region_name=conf.get('region', None))
     else:
-        logger.info('Creating AWS session using default profile...')
-        session = boto3.Session()
+        logger.info('Creating AWS session using default profile '
+                    'and region \"{}\"...'
+                    .format(conf.get('region', '<Default>')))
+
+        session = boto3.Session(region_name=conf.get('region', None))
 
     return session
 
@@ -185,18 +200,21 @@ def upload_to_bucket(session, site_dir, conf, dry):
 
             logger.info('Creating key {}...'.format(obj.key))
 
-            upload_key(
-                obj, path, cache_rules, dry, storage_class=storage_class)
+            upload_key(obj,
+                       path,
+                       cache_rules,
+                       dry,
+                       storage_class=storage_class)
             updated_keys.add(key_name)
 
     logger.info('Bucket update done.')
-    
+
     return processed_keys, updated_keys
 
 
 def invalidate_cloudfront(session, processed_keys, updated_keys, conf, dry):
-    logger.info('Connecting to Cloudfront distribution {}...'.format(
-            conf['cloudfront_distribution_id']))
+    logger.info('Connecting to Cloudfront distribution {}...'
+                .format(conf['cloudfront_distribution_id']))
 
     index_pattern = None
     if 'index_document' in conf:
@@ -231,12 +249,12 @@ def invalidate_cloudfront(session, processed_keys, updated_keys, conf, dry):
             response = cloudfront.create_invalidation(
                 DistributionId=dist_id,
                 InvalidationBatch=dict(
-                        Paths=dict(
-                            Quantity=len(paths),
-                            Items=paths
-                        ),
-                        CallerReference='s3-deploy-website'
-                    )
+                    Paths=dict(
+                        Quantity=len(paths),
+                        Items=paths
+                    ),
+                    CallerReference='s3-deploy-website'
+                )
             )
             invalidation = response['Invalidation']
             logger.info('Invalidation request {} is {}'.format(
@@ -286,4 +304,8 @@ def main():
 
     # Invalidate files in cloudfront distribution
     if 'cloudfront_distribution_id' in conf:
-        invalidate_cloudfront(session, processed_keys, updated_keys, conf, args.dry)
+        invalidate_cloudfront(session,
+                              processed_keys,
+                              updated_keys,
+                              conf,
+                              args.dry)
