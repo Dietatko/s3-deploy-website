@@ -46,6 +46,23 @@ logger = logging.getLogger(__name__)
 
 mimetypes.init()
 
+def create_session(conf):
+    session = None
+    if conf.get('aws_id', False) or conf.get('aws_secret', False):
+        if conf.get('aws_id', False) and conf.get('aws_secret', False):
+            logger.info('Creating AWS session using AWS key id \"{}\" and region \"{}\"...'.format(conf['aws_id'], conf.get('region', '<Default>')))
+            session = boto3.Session(conf['aws_id'], conf['aws_secret'], region_name=conf.get('region', None))
+        else:
+            logger.error('Both AWS access key ID and AWS secret access key has to specified if either is specified.')
+    elif conf.get('aws_profile', False):
+        logger.info('Creating AWS session using AWS profile \"{}\"...'.format(conf['aws_profile']))
+        session = boto3.Session(profile_name=conf['aws_profile'])
+    else:
+        logger.info('Creating AWS session using default profile...')
+        session = boto3.Session()
+
+    return session
+
 
 def key_name_from_path(path):
     """Convert a relative path into a key name."""
@@ -122,7 +139,8 @@ def upload_to_bucket(session, site_dir, conf, dry):
 
     logger.info('Connecting to bucket {}...'.format(bucket_name))
 
-    s3 = boto3.resource('s3')
+#    s3 = boto3.resource('s3')
+    s3 = session.resource('s3')
     bucket = s3.Bucket(bucket_name)
 
     logger.info('Site: {}'.format(site_dir))
@@ -204,7 +222,7 @@ def invalidate_cloudfront(session, processed_keys, updated_keys, conf, dry):
         logger.info('Preparing to invalidate {}...'.format(path))
         paths.append(path)
 
-    cloudfront = boto3.client('cloudfront')
+    cloudfront = session.client('cloudfront')
 
     if len(paths) > 0:
         dist_id = conf['cloudfront_distribution_id']
@@ -240,6 +258,9 @@ def main():
         '-n', '--dry-run', action='store_true', dest='dry',
         help='run without uploading any files')
     parser.add_argument(
+        '--profile', dest='profile',
+        help='AWS configuration profile')
+    parser.add_argument(
         'path', help='the .s3_website.yaml configuration file or directory',
         default='.', nargs='?')
     args = parser.parse_args()
@@ -248,14 +269,21 @@ def main():
     conf, base_path = config.load_config_file(args.path)
 
     if args.force:
-            conf['force'] = True
+        conf['force'] = True
+    if args.profile:
+        conf['aws_profile'] = args.profile
+
+    session = create_session(conf)
+    if not session:
+        logger.error('Error creating AWS session!')
+        return
 
     processed_keys, updated_keys = upload_to_bucket(
-        None,
+        session,
         os.path.join(base_path, conf['site']),
         conf,
         args.dry)
 
     # Invalidate files in cloudfront distribution
     if 'cloudfront_distribution_id' in conf:
-        invalidate_cloudfront(None, processed_keys, updated_keys, conf, args.dry)
+        invalidate_cloudfront(session, processed_keys, updated_keys, conf, args.dry)

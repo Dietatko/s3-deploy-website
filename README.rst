@@ -24,6 +24,12 @@ The configuration is stored in a YAML file like this:
 .. code-block:: yaml
 
     site: _site
+	
+	aws_id: AKIAI6XLRPEQEU6T6ZXA
+	aws_secret: Ua06LWWJRnAvUZuE4yRY/f6Cyyp9R2pF0PsQnwqd
+	region: eu-central-1
+	aws_profile: deploy
+	
     s3_bucket: example.com
     cloudfront_distribution_id: XXXXXXXXXXX
 
@@ -53,17 +59,23 @@ same directory:
 Credentials
 -----------
 
-AWS credentials can be provided through the environment variables
-``AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY``.
+AWS credentials can be provided in following ways (in order of priority):
 
-.. code-block:: shell
+1. Using the ``--profile PROFILE`` command line option selecting the AWS profile to use.
 
-    $ export AWS_ACCESS_KEY_ID=XXXXXX
-    $ export AWS_SECTER_ACCESS_KEY=XXXXXX
-    $ s3-deploy-website
+2. Using the ``aws_id`` and ``aws_secret`` settings in configuration file.
 
-They can also be provided through the various configuration files that boto_
-reads.
+3. Using the ``aws_profile`` setting in configuration file to select the AWS profile to use.
+
+4. Environment variables ``AWS_ACCESS_KEY_ID`` and ``AWS_SECRET_ACCESS_KEY``.
+
+    .. code-block:: shell
+
+        $ export AWS_ACCESS_KEY_ID=XXXXXX
+        $ export AWS_SECTER_ACCESS_KEY=XXXXXX
+        $ s3-deploy-website
+
+5. They can also be provided through the various configuration files that boto_reads.
 
 .. _boto: https://boto.readthedocs.org/en/latest/boto_config_tut.html
 
@@ -73,6 +85,26 @@ Configuration file
 **site**
     The directory of the static content to be uploaded (relative to
     the location of the configuration file (e.g. ``_site`` for Jekyll sites).
+	
+**aws_id**
+    The AWS access key ID used to connect to the AWS. If ``aws_id`` is 
+    specified, also ``aws_secret`` has to be specified. If either ``aws_id`` 
+    or ``aws_secret`` and also ``aws_profile`` is specified, the specified 
+    access key is used to connect.
+	
+**aws_secret**
+    The AWS secret access key used to connect to the AWS. If ``aws_secret`` 
+    is specified, also ``aws_id`` has to be specified. If either ``aws_id`` 
+    or ``aws_secret`` and also ``aws_profile`` is specified, the specified 
+    access key is used to connect.
+	
+**region**
+    The region used to connect to the AWS.
+	
+**aws_profile**
+    The AWS profile used to connect to the AWS. If ``aws_profile`` and also 
+	either ``aws_id`` or ``aws_secret`` is specified, the specified access 
+	key is used to connect.
 
 **s3_bucket**
     The name of the S3 bucket to upload the files to. You have to allow the
